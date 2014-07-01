@@ -10,8 +10,8 @@
 #include <string>
 // for sleep call
 #include <unistd.h>
+
 using namespace std;
-// see if this change is pushed
 
 /****************** Signal Handler to stop algorithm ******************/
 void MyHandler(int Signal) {
