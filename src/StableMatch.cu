@@ -50,8 +50,8 @@ struct Element {
 	int RValue;
 	//Type of point on graph (0 = unmatched(unstable), 1= Matched(stable), 2= nm1 generating)
 	int Type;
-	//Logical Pointer to Element
-	int Pointer;
+	//Logical pointer to element
+	int pointer;
 };
 
 
@@ -128,13 +128,13 @@ int main(int argc, char **argv) {
 	//Divide n by 2 because we have menPrefs and womenPrefs in the same file
 	n = n / 2;
 	//Make Ranking Matrix of size n^2
-	//Element RankingMatrix[n * n];
+	//Element rankingMatrix[n * n];
 
 	//Create element pointer for Ranking Matrix
-	Element *RankingMatrix;
-	//Allocate memory on gpu for RankingMatrix
-	//cudaMallocManaged(&RankingMatrix,(n*n));
-	cudaMallocManaged(&RankingMatrix,(sizeof(&RankingMatrix)*(n*n)));
+	Element *rankingMatrix;
+	//Allocate memory on gpu for rankingMatrix
+	//cudaMallocManaged(&rankingMatrix,(n*n));
+	cudaMallocManaged(&rankingMatrix,(sizeof(&rankingMatrix)*(n*n)));
 
 	/************************ Move This Section to CUDA *********************************/
 	//Add Mens Prefs to the matrix by Row
@@ -144,22 +144,22 @@ int main(int argc, char **argv) {
 	for (int i = 0, col = 0, row = 1; i < n * n; i++) {
 		//initialize R Value, type and pointer
 		//set R value to default to 0
-		RankingMatrix[i].RValue = 0;
+		rankingMatrix[i].RValue = 0;
 		//Set type to default to 0
-		RankingMatrix[i].Type = 0;
+		rankingMatrix[i].Type = 0;
 		//Set the pointer to point to its element in the array
-		RankingMatrix[i].Pointer = i;
+		rankingMatrix[i].pointer = i;
 		//Set the L value based on Mans preference
-		ss >> RankingMatrix[i].LValue;
+		ss >> rankingMatrix[i].LValue;
 		//If i%n is 0 we are at the next Y position
 		if (0 == i % n) {
 			//increment col for a new col
 			col++;
 		}
 		//For each col set y to that col
-		RankingMatrix[i].y = col;
+		rankingMatrix[i].y = col;
 		//set the x value
-		RankingMatrix[i].x = row;
+		rankingMatrix[i].x = row;
 		//If we are at the end of the matrix row
 		if (row == n) {
 			//reset the row
@@ -171,7 +171,7 @@ int main(int argc, char **argv) {
 	}
 	//Add Womens Prefs to the matrix by column
 	for (int i = 0, colsDone = 0; i < n && colsDone < n;) {
-		ss >> RankingMatrix[(i * n) + colsDone].RValue;
+		ss >> rankingMatrix[(i * n) + colsDone].RValue;
 		i++;
 		if (i == n) {
 			i = 0;
@@ -182,21 +182,21 @@ int main(int argc, char **argv) {
 	//Print out Ranking Matrix for checking
 	for (int i = 0; i < n * n; i++) {
 		//Make sure i isn't out of bounds and the Y values are the same
-		if ((i + 1 < n * n) && RankingMatrix[i].y == RankingMatrix[i + 1].y) {
-			cout << "(" << RankingMatrix[i].LValue << ","
-					<< RankingMatrix[i].RValue << ") ";
+		if ((i + 1 < n * n) && rankingMatrix[i].y == rankingMatrix[i + 1].y) {
+			cout << "(" << rankingMatrix[i].LValue << ","
+					<< rankingMatrix[i].RValue << ") ";
 
 		}
 		//Otherwise print out the last matching for row and a new line
 		else {
-			cout << "(" << RankingMatrix[i].LValue << ","
-					<< RankingMatrix[i].RValue << ") " << endl;
+			cout << "(" << rankingMatrix[i].LValue << ","
+					<< rankingMatrix[i].RValue << ") " << endl;
 		}
 	}
 	/****************** End of Matrix Generation *********/
 
 
-	cudaFree(RankingMatrix);
+	cudaFree(rankingMatrix);
 	/****************** Reset And End ******************/
 	// cudaDeviceReset causes the driver to clean up all state. While
 	// not mandatory in normal operation, it is good practice.  It is also
