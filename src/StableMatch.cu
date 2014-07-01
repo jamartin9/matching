@@ -121,7 +121,9 @@ int main(int argc, char **argv) {
 		cerr << "File Doesn't Exist or Couldn't be opened" << endl;
 		return -1;
 	}
+
 	/****************** End Of File Reading ******************/
+
 	// make a string stream from string read from file
 	stringstream ss(s);
 	// divide n by 2 because we have menPrefs and womenPrefs in the same file
@@ -129,7 +131,7 @@ int main(int argc, char **argv) {
 	// create element pointer for Ranking Matrix
 	Element *rankingMatrix;
 	// allocate memory on gpu for rankingMatrix
-	cudaMallocManaged(&rankingMatrix,(sizeof(&rankingMatrix)*(n*n)));
+	cudaMallocManaged(&rankingMatrix, (sizeof(rankingMatrix) * (n * n)));
 
 	/************************ Move This Section to CUDA *********************************/
 	// add mens prefs to the matrix by row
@@ -188,10 +190,13 @@ int main(int argc, char **argv) {
 					<< rankingMatrix[i].RValue << ") " << endl;
 		}
 	}
+	cout << endl;
+
 	/****************** End of Matrix Generation *********/
 
 
 	cudaFree(rankingMatrix);
+
 	/****************** Reset And End ******************/
 	// cudaDeviceReset causes the driver to clean up all state. While
 	// not mandatory in normal operation, it is good practice.  It is also
