@@ -13,9 +13,8 @@
 // for time()
 #include <time.h>
 // for sleep()
-//#include <unistd.h>
+#include <unistd.h>
 
-// use standard namespace
 using namespace std;
 
 // structure for each Processor Element
@@ -24,30 +23,30 @@ struct Element {
 	int x;
 	// graph y value, row
 	int y;
-	// l value of the graph (man pref)
-	int LValue;
-	// r value of the graph (women pref)
-	int RValue;
-	// type of point on graph
-	// (0 = unmatched(unstable), 1= Matched(stable), 2= nm1 generating)
-	int Type;
+	// l value of the graph (e.g., man pref)
+	int l;
+	// r value of the graph (e.g., women pref)
+	int r;
 	// logical pointer to element
 	int pointer;
+
 };
 
-// structure to represent a man woman pair
+// structure to represent a pair
 struct Pair {
-	// integer to hold element a, e.g. the man
-	int a;
-	// integer to hold element b, e.g. the woman
-	int b;
+	int a; // integer to hold element a, e.g. the man, 1 <= a <= n
+	int b; // integer to hold element b, e.g. the woman, 1 <= a <= n
 };
 
 // global pointer on host to represent pair
 Pair *pairs;
 
-// make global a counter for the number of lines/people
-int n = 0;
+// global state for stable matching
+// true if no unstable matches exist, false otherwise
+bool *stable;
+
+// global counter for the number of lines/people
+int n;
 
 // function for printing pairs
 void printPairs() {
@@ -57,10 +56,11 @@ void printPairs() {
 		// print error
 		cerr << "No participants" << endl;
 	} else {
+		cout << "current matching: ";
 		// for each pair
 		for (int i = 0; i < n; i++) {
 			// print out both values
-			cout << "( " << pairs[i].a << " , " << pairs[i].b << " ) ";
+			cout << "(" << pairs[i].a << "," << pairs[i].b << ") ";
 		}
 		cout << endl;
 	}
@@ -69,25 +69,15 @@ void printPairs() {
 // signal handler function to stop algorithm
 void signalHandler(int signal) {
 
-	// switch what we do for each signal that used handler
 	switch (signal) {
-	// handle SIGTERM
-	case SIGTERM: {
-		printPairs();
-		break;
-	}
-		// handle SIGINT
-	case SIGINT: {
-		printPairs();
-		break;
-	}
-		// default to be safe
+	case SIGTERM:
+	case SIGINT:
 	default: {
 		printPairs();
+		exit (EXIT_SUCCESS);
 		break;
 	}
 	}
-
 }
 
 // function to create signal handlers
@@ -170,8 +160,10 @@ __global__ void iniMatch(Element *rankingMatrix, int n, Pair pairs[]) {
 	// make temporary element to hold first item
 	Element element = rankingMatrix[threadIdx.x];
 
+	int firstElementX = element.x;
+
 	// take x value for one member of pair
-	pairs[threadIdx.x].a = element.x;
+	pairs[threadIdx.x].a = firstElementX;
 
 	// go to the end of the list
 	for (int i = 0; i < n - 1; i++) {
@@ -180,13 +172,64 @@ __global__ void iniMatch(Element *rankingMatrix, int n, Pair pairs[]) {
 		element = rankingMatrix[element.pointer];
 	}
 
+	int seconElementX = element.x;
+
 	// take the x value of the last element pointed to after following list
 	// for the second member of the pair
-	pairs[threadIdx.x].b = element.x;
+	pairs[threadIdx.x].b = seconElementX;
+	pairs[n + seconElementX - 1].b = firstElementX; // for reverse lookup
+	pairs[n + seconElementX - 1].a = seconElementX; // for reverse lookup
+}
 
-	// print out thread and pairs value
-	//printf("(%i,%i)\n", pairs[threadIdx.x].a, pairs[threadIdx.x].b);
+// CUDA kernel to mark unstable pairs in the ranking matrix
+__global__ void markUnstable(Element *rankingMatrix, int n, Pair *pairs,
+		bool *stable) {
 
+	// element associated with this thread
+
+	Element e = rankingMatrix[threadIdx.x];
+	//printf("e: threadIdx: %2i, y: %i, x: %i\n", threadIdx.x, e.y, e.x);
+
+	// element of matching pair in same row
+
+	// get the current elements row
+	int rowIndex = e.y - 1;
+
+	// get current row in the ranking matrix
+	int indexToRowInRankingMatrix = rowIndex * n;
+
+	// get the pair in the elements rows column
+	// pairs[i], 0 <= i < n, sorted by rowIndex
+	int colIndex = pairs[rowIndex].b - 1;
+
+	// index is the row shifted by the column
+	int index = indexToRowInRankingMatrix + colIndex;
+
+	Element r = rankingMatrix[index];
+	//printf("r: threadIdx: %2i, y: %i, x: %i\n", threadIdx.x, r.y, r.x);
+
+	// element of matching pair in same column
+
+	// get the elements current column
+	colIndex = e.x - 1;
+
+	// get the pair in that columns row
+	// pairs[i], n <= i < 2n, sorted by colIndex
+	rowIndex = pairs[n + colIndex].b - 1;
+
+	//get the row index of the pair
+	indexToRowInRankingMatrix = rowIndex * n;
+
+	// index is the row shifted by the column
+	index = indexToRowInRankingMatrix + colIndex;
+
+	Element c = rankingMatrix[index];
+	//printf("c: threadIdx: %2i, y: %i, x: %i\n", threadIdx.x, c.y, c.x);
+
+	if (r.l > e.l && c.r > e.r) {
+		*stable = false;
+		printf("unstable pair: (%i,%i)\n", e.y, e.x);
+	}
 }
 
 // function to print out ranking matrix L and R values
@@ -194,26 +237,19 @@ void printRankingMatrix(Element rankingMatrix[]) {
 
 	// for each element of the ranking matrix
 	for (int i = 0; i < n * n; i++) {
-
 		// make sure i isn't out of bounds and the Y values are the same (same row)
 		if ((i + 1 < n * n) && rankingMatrix[i].y == rankingMatrix[i + 1].y) {
-
 			// print out L and R value
-			cout << "(" << rankingMatrix[i].LValue << ","
-					<< rankingMatrix[i].RValue << ") ";
-
+			cout << "(" << rankingMatrix[i].l << "," << rankingMatrix[i].r
+					<< ") ";
 		}
-
 		// otherwise print out the last PE for the row and a new line for the next row
 		else {
 			// print out last pair in row and start new row
-			cout << "(" << rankingMatrix[i].LValue << ","
-					<< rankingMatrix[i].RValue << ") " << endl;
+			cout << "(" << rankingMatrix[i].l << "," << rankingMatrix[i].r
+					<< ") " << endl;
 		}
 	}
-
-	// print out a new line
-	cout << endl;
 }
 
 // function to print out ranking matrix pointers
@@ -295,8 +331,8 @@ void initMatch(Element rankingMatrix[]) {
 	// free the random off sets on the GPU
 	cudaFree(randomOffsets);
 
-	// allocate pairs on the GPU
-	cudaMallocManaged(&pairs, sizeof(pairs[0]) * n);
+	// allocate pairs on the GPU, n for forward, n for reverse
+	cudaMallocManaged(&pairs, sizeof(pairs[0]) * 2 * n);
 
 	// call kernel to create initial match
 	iniMatch<<<1, n>>>(rankingMatrix, n, pairs);
@@ -310,17 +346,17 @@ void initMatch(Element rankingMatrix[]) {
 
 int main(int argc, char **argv) {
 
-	// setup signal handlers for stopping algorithm
-	createSignalHandlers();
+	n = 0; // start with no participants
+
+	createSignalHandlers(); // for stopping algorithm
 
 	// check CLI arguments
 	// check that the number of arguments is two
 	if (argc != 2) {
 		// print error and return -1
-		cerr
-			<< "Incorrect number of arguments\n"
-			<< "Please enter the path to the file as the first argument"
-			<< endl;
+		cerr << "Incorrect number of arguments\n"
+				<< "Please enter the path to the file as the first argument"
+				<< endl;
 		return -1;
 	}
 
@@ -377,7 +413,7 @@ int main(int argc, char **argv) {
 	Element *rankingMatrix;
 
 	// allocate memory on GPU for rankingMatrix
-	cudaMallocManaged(&rankingMatrix, (sizeof(rankingMatrix) * (n * n)));
+	cudaMallocManaged(&rankingMatrix, (sizeof(*rankingMatrix) * (n * n)));
 
 	//TODO: Move creation of Matrix to CUDA
 	// create ranking matrix
@@ -388,16 +424,13 @@ int main(int argc, char **argv) {
 	for (int i = 0, col = 0, row = 1; i < n * n; i++) {
 		// initialize r Value, type and pointer
 		// set r value to default to 0
-		rankingMatrix[i].RValue = 0;
-
-		// set type to default to 0
-		rankingMatrix[i].Type = 0;
+		rankingMatrix[i].r = 0;
 
 		// set the pointer to point to its element in the array
 		rankingMatrix[i].pointer = i;
 
 		// set the l value based on Mans preference
-		ss >> rankingMatrix[i].LValue;
+		ss >> rankingMatrix[i].l;
 
 		// if i%n is 0 we are at the next Y position
 		if (0 == i % n) {
@@ -428,7 +461,7 @@ int main(int argc, char **argv) {
 	// add womens prefs to the matrix by column
 	for (int i = 0, colsDone = 0; i < n && colsDone < n;) {
 		// read in each preference into column
-		ss >> rankingMatrix[(i * n) + colsDone].RValue;
+		ss >> rankingMatrix[(i * n) + colsDone].r;
 
 		// increment i
 		i++;
@@ -441,24 +474,38 @@ int main(int argc, char **argv) {
 			//increment the number of columns done
 			colsDone++;
 		}
-
 	}
 
 	//printRankingMatrix(rankingMatrix, n);
 
-	// create Initial Matching by calling function
+	// create initial matching
 	initMatch(rankingMatrix);
 
 	//printRankingMatrixPointers(rankingMatrix, n);
 
-	// free the ranking matrix from the GPU
-	cudaFree(rankingMatrix);
+	printRankingMatrix(rankingMatrix);
 
-	//print out pairs (matching)
+	cudaMallocManaged(&stable, sizeof(*stable));
+
+	*stable = true;
+
+	// check for unstable pairs
+	markUnstable<<<1, n * n>>>(rankingMatrix, n, pairs, stable);
+
+	cudaDeviceSynchronize();
+
+	while (!*stable) {
+		//iterate<<<1, n>>>(rankingMatrix, n, pairs);
+		//markUnstable<<<1, n * n>>>(rankingMatrix, n, pairs, stable);
+		//cudaDeviceSynchronize();
+		sleep(1000); // take a nap
+	}
+
 	printPairs();
 
-	// free pairs from GPU
+	cudaFree(stable);
 	cudaFree(pairs);
+	cudaFree(rankingMatrix);
 
 	/****************** Reset And End ******************/
 	// cudaDeviceReset causes the driver to clean up all state. While
