@@ -254,10 +254,8 @@ __global__ void markUnstable(Element *rankingMatrix, int n, Pair *pairs,
 }
 
 // CUDA kernel to gather attributes of potential nm_1-generating pairs
-__global__ void protoNM1Gen(
-		Element *rankingMatrix,
-		thrust::pair<int, int> *nm1GenPairs,
-		int n) {
+__global__ void protoNM1Gen(Element *rankingMatrix,
+		thrust::pair<int, int> *nm1GenPairs, int n) {
 
 	if (rankingMatrix[threadIdx.x].type == 2) { // unstable
 		// take the l and col position
@@ -267,6 +265,30 @@ __global__ void protoNM1Gen(
 		// set the l value to more than the max l value
 		nm1GenPairs[threadIdx.x].first = n + 1;
 		nm1GenPairs[threadIdx.x].second = rankingMatrix[threadIdx.x].x;
+	}
+}
+
+// CUDA kernel to gather attributes of potential nm_1 pairs
+__global__ void protoNM1(Element *rankingMatrix,
+		thrust::pair<int, int> *nm1GenPairs, int n) {
+
+	// get the column index in ranking matrix
+	int col = (rankingMatrix[threadIdx.x].x - 1) * n;
+	// get the position in column
+	int shift = rankingMatrix[threadIdx.x].y - 1;
+	printf("thread: %i, shift: %i, col: %i, indexInPairs: %i\n",threadIdx.x,shift,col,col+shift);
+
+	//if the type is nm1 gen
+	if (rankingMatrix[threadIdx.x].type == 3) {
+
+		// take the r and row position
+		nm1GenPairs[col + shift].first = rankingMatrix[threadIdx.x].r;
+		nm1GenPairs[col + shift].second = rankingMatrix[threadIdx.x].y;
+
+	} else {
+		// set the r value to more than the max r value
+		nm1GenPairs[col + shift].first = n + 1;
+		nm1GenPairs[col + shift].second = rankingMatrix[threadIdx.x].y;
 	}
 }
 
@@ -398,15 +420,45 @@ void markNM1Gen(Element *rankingMatrix) {
 	protoNM1Gen<<<1, n * n>>>(rankingMatrix, nm1GenPairs, n);
 	cudaDeviceSynchronize();
 
+#pragma omp parallel for
 	// for each row
 	for (int i = 0; i < n; i++) {
 		// make pointer to the minimum element in the row
-		thrust::pair<int, int> *minElementInRow =
-				thrust::min_element(nm1GenPairs, nm1GenPairs + n);
+		thrust::pair<int, int> *minElementInRow = thrust::min_element(
+				nm1GenPairs, nm1GenPairs + n);
 		// if minElementInRow is unstable
 		if ((*minElementInRow).first != n + 1) {
 			// change the type to nm_1-generating pair
 			rankingMatrix[i * n + ((*minElementInRow).second - 1)].type = 3;
+		}
+
+		nm1GenPairs = nm1GenPairs + n;
+	}
+
+	cudaFree(nm1GenPairs);
+}
+
+// function to mark the nm_1 pairs in the ranking matrix
+void markNM1(Element *rankingMatrix) {
+
+	// make tuple of ints for pairs (lvalue, column)
+	thrust::pair<int, int> *nm1GenPairs;
+	cudaMallocManaged(&nm1GenPairs, sizeof(nm1GenPairs[0]) * (n * n));
+
+	protoNM1<<<1, n * n>>>(rankingMatrix, nm1GenPairs, n);
+	cudaDeviceSynchronize();
+#pragma omp parallel for
+	// for each col
+	for (int i = 0; i < n; i++) {
+		// make pointer to the minimum element in the column
+		thrust::pair<int, int> *minElementInRow = thrust::min_element(
+				nm1GenPairs, nm1GenPairs + n);
+		// if minElementInRow is unstable
+		if ((*minElementInRow).first != n + 1) {
+			// change the type to nm_1 pair
+			//printf("The column is: %i. The second is: %i. The element is: %i\n",i+1,(*minElementInRow).second,i + (n * ((*minElementInRow).second - 1)));
+			// change the pair to nm1 pair
+			rankingMatrix[i + (n * ((*minElementInRow).second - 1))].type = 4;
 		}
 
 		nm1GenPairs = nm1GenPairs + n;
@@ -431,11 +483,11 @@ int main(int argc, char **argv) {
 		return -1;
 	}
 
-	/****************** Read In File For Data ******************/
-
 	// make a pointer to the path of the file from the CLI arguments
 	const char *UsersFile;
 	UsersFile = argv[1];
+
+	/****************** Make This Section Parallel ******************/
 
 	// make a file stream called inFile from the users file
 	ifstream inFile(UsersFile);
@@ -472,8 +524,6 @@ int main(int argc, char **argv) {
 		return -1;
 	}
 
-	/****************** End Of File Reading ******************/
-
 	// make a string stream from string read from file
 	stringstream ss(s);
 
@@ -486,7 +536,6 @@ int main(int argc, char **argv) {
 	// allocate memory on GPU for rankingMatrix
 	cudaMallocManaged(&rankingMatrix, (sizeof(*rankingMatrix) * (n * n)));
 
-	//TODO: Move creation of Matrix to CUDA
 	// create ranking matrix
 	// add mens prefs to the matrix by row
 	// add x and y values at the same time
@@ -548,6 +597,7 @@ int main(int argc, char **argv) {
 			colsDone++;
 		}
 	}
+	/****************** End of Section ******************/
 
 	// create initial matching
 	initMatch(rankingMatrix);
@@ -563,14 +613,9 @@ int main(int argc, char **argv) {
 
 	markNM1Gen(rankingMatrix);
 
-	printRankingMatrix(rankingMatrix);
+	markNM1(rankingMatrix);
 
-	while (!*stable) {
-		//iterate<<<1, n>>>(rankingMatrix, n, pairs);
-		//markUnstable<<<1, n * n>>>(rankingMatrix, n, pairs, stable);
-		//cudaDeviceSynchronize();
-		sleep(1); // take a nap, not a coma
-	}
+	printRankingMatrix(rankingMatrix);
 
 	printPairs();
 
