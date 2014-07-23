@@ -24,7 +24,7 @@ using namespace std;
 // Add controlling logic
 // Change find minimum to not use thrust and use kernel for rows and cols
 // Make random number generation parallel
-// Make file reading parallel
+// Generate random preference lists
 // Make matrix generation parallel
 // Change Init_Phase(iniMatch) to use get final position by first thread to reach it instead of first thread in row
 // Allocate n on GPU and pass pointer instead of passing by value
@@ -32,9 +32,9 @@ using namespace std;
 
 // structure for each Processor Element
 struct Element {
-	// graph x value, column
+	// graph x value, row
 	int x;
-	// graph y value, row
+	// graph x value, column
 	int y;
 	// l value of the graph (e.g., man pref)
 	int l;
@@ -52,11 +52,31 @@ struct Element {
 	int type;
 	// nm_2-generating
 	bool nm2gen;
+	// nm_2-generating chain r-pointer
+	Element *rPointer;
+	// nm_2-generating chain c-pointer
+	Element *cPointer;
 };
 
+// first n pairs:
 // first integer to hold element a, e.g. the man, 1 <= a <= n
 // second integer to hold element b, e.g. the woman, 1 <= b <= n
+//
+// second n pairs:
+// first integer to hold element a, e.g. the man, 1 <= a <= n
+// second integer to hold element b, e.g. the woman, 1 <= b <= n
+// second half of array contains swapped values sorted by key
 thrust::pair<int, int> *matchingPairs;
+
+// array indicating the presence or absence of nm_1 pairs in rows and columns
+// first n entries correspond to row 1 to n
+// second n entries correspond to columns 1 to n
+//bool *nm1Pairs;
+
+// array of pointers to the nm_2-generating pairs
+// for first n, index is row zero-indexed, value is pointer
+// for second n, index is column zero-indexed, value is pointer
+//Element **nm2GenPairPointers;
 
 // global state for stable matching
 // true if no unstable matches exist, false otherwise
@@ -181,7 +201,7 @@ __global__ void iniMatch(Element *rankingMatrix, int n,
 	if (threadIdx.x < n) {
 		// make temporary element to hold first item
 
-		a = rankingMatrix[threadIdx.x].x; // a, as in Pair (a,b)
+		a = rankingMatrix[threadIdx.x].y; // a, as in Pair (a,b)
 
 		// take x value for one member of pair
 		pairs[threadIdx.x].first = a;
@@ -196,7 +216,7 @@ __global__ void iniMatch(Element *rankingMatrix, int n,
 	// if we started in the first row save our end position
 	if (threadIdx.x < n) {
 		int b;
-		b = rankingMatrix[rankingMatrix[threadIdx.x].pointer].x; // b, as in Pair (a,b)
+		b = rankingMatrix[rankingMatrix[threadIdx.x].pointer].y; // b, as in Pair (a,b)
 
 		rankingMatrix[(a - 1) * n + (b - 1)].type = 1; // mark as matching
 
@@ -209,7 +229,7 @@ __global__ void iniMatch(Element *rankingMatrix, int n,
 }
 
 // CUDA kernel to mark unstable pairs in the ranking matrix
-__global__ void markUnstable(Element *rankingMatrix, int n,
+__global__ void unstable(Element *rankingMatrix, int n,
 		thrust::pair<int, int> *pairs, bool *stable) {
 
 	// element associated with this thread
@@ -219,8 +239,8 @@ __global__ void markUnstable(Element *rankingMatrix, int n,
 
 	// element of matching pair in same row
 
-	// get the current elements row
-	int rowIndex = (*e).y - 1;
+	// get the current element's row
+	int rowIndex = (*e).x - 1;
 
 	// get current row in the ranking matrix
 	int indexToRowInRankingMatrix = rowIndex * n;
@@ -238,7 +258,7 @@ __global__ void markUnstable(Element *rankingMatrix, int n,
 	// element of matching pair in same column
 
 	// get the elements current column
-	colIndex = (*e).x - 1;
+	colIndex = (*e).y - 1;
 
 	// get the pair in that columns row
 	// pairs[i], n <= i < 2n, sorted by colIndex
@@ -268,11 +288,11 @@ __global__ void protoNM1Gen(Element *rankingMatrix,
 	if (rankingMatrix[threadIdx.x].type == 2) { // unstable
 		// take the l and col position
 		nm1GenPairs[threadIdx.x].first = rankingMatrix[threadIdx.x].l;
-		nm1GenPairs[threadIdx.x].second = rankingMatrix[threadIdx.x].x;
+		nm1GenPairs[threadIdx.x].second = rankingMatrix[threadIdx.x].y;
 	} else {
 		// set the l value to more than the max l value
 		nm1GenPairs[threadIdx.x].first = n + 1;
-		nm1GenPairs[threadIdx.x].second = rankingMatrix[threadIdx.x].x;
+		nm1GenPairs[threadIdx.x].second = rankingMatrix[threadIdx.x].y;
 	}
 }
 
@@ -281,9 +301,9 @@ __global__ void protoNM1(Element *rankingMatrix,
 		thrust::pair<int, int> *nm1GenPairs, int n) {
 
 	// get the column index in ranking matrix
-	int col = (rankingMatrix[threadIdx.x].x - 1) * n;
+	int col = (rankingMatrix[threadIdx.x].y - 1) * n;
 	// get the position in column
-	int shift = rankingMatrix[threadIdx.x].y - 1;
+	int shift = rankingMatrix[threadIdx.x].x - 1;
 	//printf("thread: %i, shift: %i, col: %i, indexInPairs: %i\n",threadIdx.x,shift,col,col+shift);
 
 	//if the type is nm1 gen
@@ -291,56 +311,142 @@ __global__ void protoNM1(Element *rankingMatrix,
 
 		// take the r and row position
 		nm1GenPairs[col + shift].first = rankingMatrix[threadIdx.x].r;
-		nm1GenPairs[col + shift].second = rankingMatrix[threadIdx.x].y;
+		nm1GenPairs[col + shift].second = rankingMatrix[threadIdx.x].x;
 
 	} else {
 		// set the r value to more than the max r value
 		nm1GenPairs[col + shift].first = n + 1;
-		nm1GenPairs[col + shift].second = rankingMatrix[threadIdx.x].y;
+		nm1GenPairs[col + shift].second = rankingMatrix[threadIdx.x].x;
 	}
 }
 
-// CUDA kernel to get nm2-gen pairs
-// For each PE(i,j) containing a nm1-pair mark the PE(l,k) as a nm2-generating pair,
-// where l = M(C(j))x and k = M(R(i))y
-__global__ void nm2Gen(Element *rankingMatrix, thrust::pair<int, int> *pairs,
+// CUDA kernel to initialize nm1Pairs entries to false
+__global__ void nm1False(bool *nm1Pairs) {
+	nm1Pairs[threadIdx.x] = false;
+}
+
+// CUDA kernel to mark nm2-generating pairs
+// For each PE(i,j) containing a nm1-pair
+//     mark the PE(l,k) as a nm2-generating pair,
+//     where l = M(C(j))x, the row of the matching pair in column j and
+//           k = M(R(i))y, the column of the matching pair in row i
+__global__ void nm2GenDevice(
+		Element *rankingMatrix,
+		thrust::pair<int, int> *matchingPairs,
+		Element **nm2GenPairPointers,
 		int n) {
-	//if the element is of type 4
+
+	// if Element is an nm_1 pair
 	if (rankingMatrix[threadIdx.x].type == 4) {
-		// get the x-coordinate of the matching pair in column j
-		int l = pairs[n + rankingMatrix[threadIdx.x].x - 1].second - 1;
-		// get the y-coordinate of the matching pair in rows i
-		int k = pairs[rankingMatrix[threadIdx.x].y - 1].second - 1;
-		// mark element in matrix at coordinates as nm2-gen
-		//printf("The values are for l: %i, k: %i, index of changed:%i, index of thread:%i\n",l,k,(n*l)+k,threadIdx.x);
-		rankingMatrix[n * l + k].nm2gen = true;
+
+		int col = rankingMatrix[threadIdx.x].y;
+		int row = rankingMatrix[threadIdx.x].x;
+
+		// get the row of the matching pair in the same column
+		int l = matchingPairs[n + col - 1].second;
+
+		// get the column of the matching pair in the same row
+		int k = matchingPairs[row - 1].second;
+
+		// save a pointer to the Element at row l and column k in the ranking matrix
+		Element *e = &rankingMatrix[n * (l - 1) + (k - 1)];
+
+		// mark element as nm2-generating (not nm_1 pairs?)
+		(*e).nm2gen = true;
+
+		// save a pointer to this pair in the nm2GenPairPointersPointers array
+		nm2GenPairPointers[l - 1] = e;
+		nm2GenPairPointers[n + k - 1] = e; // for reverse lookup
+	}
+}
+
+// CUDA kernel to set up nm2-generating chain pointers
+__global__ void nm2GenPointers(
+		Element *rankingMatrix,
+		thrust::pair<int,int> *matchingPairs,
+		bool *nm1Pairs,
+		Element **nm2GenPairPointers,
+		int n) {
+
+	if (rankingMatrix[threadIdx.x].nm2gen) {
+
+		Element *e = &rankingMatrix[threadIdx.x];
+
+		int row = (*e).x;
+		int col = (*e).y;
+
+		// if there is an nm_1 pair in row i
+		if (nm1Pairs[row - 1] == true) {
+			// the r-pointer of PE_{i,j} points to
+			// the PE containing an nm_2-generating pair
+			// in the same column as the matching pair in the same row as PE_{i,j}
+			thrust::pair<int,int> *matchingPairInSameRow = &matchingPairs[row - 1];
+			int columnOfMatchingPairInSameRow = (*matchingPairInSameRow).second;
+			(*e).rPointer = nm2GenPairPointers[n + columnOfMatchingPairInSameRow - 1];
+		}
+		// otherwise
+		else {
+			// it points to itself
+			(*e).rPointer = e;
+		}
+
+		// if there is an nm_1 pair in column j
+		if (nm1Pairs[n + col - 1] == true) {
+			// the c-pointer of PE_{i,j} points to
+			// the PE containing an nm_2-generating pair
+			// in the same row as the matching pair in the same column as PE_{i,j}
+			thrust::pair<int,int> *matchingPairInSameColumn = &matchingPairs[n + col - 1];
+			int rowOfMatchingPairInSameColumn = (*matchingPairInSameColumn).second;
+			(*e).cPointer = nm2GenPairPointers[rowOfMatchingPairInSameColumn - 1];
+		}
+		// otherwise
+		else {
+			// it points to itself
+			(*e).cPointer = e;
+		}
+
+		//if ((*e).rPointer == e && (*e).cPointer == e) {
+			// e is isolated node in G_M,
+			// add *e to the list of nm_2 pairs
+			//(*e).type = 5;
+		//}
 	}
 }
 
 // function to print out ranking matrix L and R values
 void printRankingMatrix(Element rankingMatrix[]) {
 
-	printf("key: pair (a,b type), where type is:\n");
+	printf("key: pair (a,b[:] type), where type is:\n");
 	printf("  0: unmatched pair\n");
 	printf("  1: matched pair\n");
 	printf("  2: unstable pair\n");
-	printf("  3: nm1-generating-pair\n");
-	printf("  4: nm1-pair\n");
-	printf("  5: nm2-pair\n");
+	printf("  3: nm1-generating pair\n");
+	printf("  4: nm1 pair\n");
+	printf("  5: nm2 pair\n");
+	printf("and where : indicates nm2-generating pair\n");
 
 	// for each element of the ranking matrix
 	for (int i = 0; i < n * n; i++) {
 		// make sure i isn't out of bounds and the Y values are the same (same row)
-		if ((i + 1 < n * n) && rankingMatrix[i].y == rankingMatrix[i + 1].y) {
+		//if ((i + 1 < n * n) && rankingMatrix[i].x == rankingMatrix[i + 1].x) {
+		if ((i + 1) % n != 0) {
 			//  if PE is nm2gen
 			if (rankingMatrix[i].nm2gen == true) {
 				// print out L and R value and nm2gen symbol :
-				printf("(%i,%i %i:) ", rankingMatrix[i].l, rankingMatrix[i].r,
-						rankingMatrix[i].type);
+				printf("(%2i,%2i %i: %2i,%2i %2i,%2i) ",
+						rankingMatrix[i].l,
+						rankingMatrix[i].r,
+						rankingMatrix[i].type,
+						( *( rankingMatrix[i].rPointer ) ).x,
+						( *( rankingMatrix[i].rPointer ) ).y,
+						( *( rankingMatrix[i].cPointer ) ).x,
+						( *( rankingMatrix[i].cPointer ) ).y);
 			} else {
 
 				// print out L and R value
-				printf("(%i,%i %i) ", rankingMatrix[i].l, rankingMatrix[i].r,
+				printf("(%2i,%2i %i             ) ",
+						rankingMatrix[i].l,
+						rankingMatrix[i].r,
 						rankingMatrix[i].type);
 			}
 		}
@@ -349,12 +455,20 @@ void printRankingMatrix(Element rankingMatrix[]) {
 			//  if PE is nm2gen
 			if (rankingMatrix[i].nm2gen == true) {
 				// print out last pair in row and start new row
-				printf("(%i,%i %i:)\n", rankingMatrix[i].l, rankingMatrix[i].r,
-						rankingMatrix[i].type);
+				printf("(%2i,%2i %i: %2i,%2i %2i,%2i)\n",
+						rankingMatrix[i].l,
+						rankingMatrix[i].r,
+						rankingMatrix[i].type,
+						( *( rankingMatrix[i].rPointer ) ).x,
+						( *( rankingMatrix[i].rPointer ) ).y,
+						( *( rankingMatrix[i].cPointer ) ).x,
+						( *( rankingMatrix[i].cPointer ) ).y);
 			} else {
 
 				// print out last pair in row and start new row
-				printf("(%i,%i %i)\n", rankingMatrix[i].l, rankingMatrix[i].r,
+				printf("(%2i,%2i %i             )\n",
+						rankingMatrix[i].l,
+						rankingMatrix[i].r,
 						rankingMatrix[i].type);
 			}
 		}
@@ -368,7 +482,7 @@ void printRankingMatrixPointers(Element rankingMatrix[]) {
 	for (int i = 0; i < n * n; i++) {
 
 		// make sure i isn't out of bounds and the Y values are the same
-		if ((i + 1 < n * n) && rankingMatrix[i].y == rankingMatrix[i + 1].y) {
+		if ((i + 1 < n * n) && rankingMatrix[i].x == rankingMatrix[i + 1].x) {
 			cout << rankingMatrix[i].pointer << " ";
 		}
 
@@ -447,7 +561,7 @@ void initMatch(Element rankingMatrix[]) {
 }
 
 // function to mark the nm_1-generating pairs in the ranking matrix
-void markNM1Gen(Element *rankingMatrix) {
+void nm1Gen(Element *rankingMatrix) {
 
 	// make tuple of ints for pairs (lvalue, column)
 	thrust::pair<int, int> *nm1GenPairs;
@@ -473,31 +587,69 @@ void markNM1Gen(Element *rankingMatrix) {
 }
 
 // function to mark the nm_1 pairs in the ranking matrix
-void markNM1(Element *rankingMatrix) {
+void nm1(Element *rankingMatrix, bool *nm1Pairs) {
+
+	// initialize nm1Pairs array entries to false
+	nm1False<<<1, 2 * n>>>(nm1Pairs);
+
+	cudaDeviceSynchronize();
 
 	// make tuple of ints for pairs (lvalue, column)
-	thrust::pair<int, int> *nm1Pairs;
-	cudaMallocManaged(&nm1Pairs, sizeof(nm1Pairs[0]) * (n * n));
+	thrust::pair<int, int> *localNM1Pairs;
 
-	protoNM1<<<1, n * n>>>(rankingMatrix, nm1Pairs, n);
+	cudaMallocManaged(&localNM1Pairs, sizeof(localNM1Pairs[0]) * (n * n));
+
+	protoNM1<<<1, n * n>>>(rankingMatrix, localNM1Pairs, n);
+
 	cudaDeviceSynchronize();
+
 	// for each col
 	for (int i = 0; i < n; i++) {
+
 		// make pointer to the minimum element in the column
-		thrust::pair<int, int> *minElementInRow = thrust::min_element(nm1Pairs,
-				nm1Pairs + n);
+		thrust::pair<int, int> *minElementInRow = thrust::min_element(localNM1Pairs, localNM1Pairs + n);
+
 		// if minElementInRow is unstable
 		if ((*minElementInRow).first != n + 1) {
+
+			Element *e = &rankingMatrix[i + (n * ((*minElementInRow).second - 1))];
+
 			// change the type to nm_1 pair
-			//printf("The column is: %i. The second is: %i. The element is: %i\n",i+1,(*minElementInRow).second,i + (n * ((*minElementInRow).second - 1)));
-			// change the pair to nm1 pair
-			rankingMatrix[i + (n * ((*minElementInRow).second - 1))].type = 4;
+			(*e).type = 4;
+
+			// remember that there is an nm_1 pair in this row
+			nm1Pairs[(*e).x - 1] = true;
+
+			// remember that there is an nm_1 pair in this column
+			nm1Pairs[n + (*e).y - 1] = true;
 		}
 
-		nm1Pairs = nm1Pairs + n;
+		localNM1Pairs = localNM1Pairs + n;
 	}
 
-	cudaFree(nm1Pairs);
+	cudaFree(localNM1Pairs);
+}
+
+// function to mark the nm_2-generating pairs in the ranking matrix
+void nm2GenHost(
+		Element *rankingMatrix,
+		thrust::pair<int,int> *matchingPairs,
+		bool *nm1Pairs,
+		int n) {
+
+	Element **nm2GenPairPointers;
+
+	cudaMallocManaged(&nm2GenPairPointers, 2 * n * sizeof(*nm2GenPairPointers));
+
+	nm2GenDevice<<<1, n * n>>>(rankingMatrix, matchingPairs, nm2GenPairPointers, n);
+
+	cudaDeviceSynchronize();
+
+	nm2GenPointers<<<1, n * n>>>(rankingMatrix, matchingPairs, nm1Pairs, nm2GenPairPointers, n);
+
+	cudaDeviceSynchronize();
+
+	cudaFree(nm2GenPairPointers);
 }
 
 // main function
@@ -595,10 +747,10 @@ int main(int argc, char **argv) {
 		}
 
 		// for each col set y to that col
-		rankingMatrix[i].y = col;
+		rankingMatrix[i].x = col;
 
 		// set the x value
-		rankingMatrix[i].x = row;
+		rankingMatrix[i].y = row;
 
 		// if we are at the end of the matrix row
 		if (row == n) {
@@ -636,21 +788,22 @@ int main(int argc, char **argv) {
 	initMatch(rankingMatrix);
 
 	cudaMallocManaged(&stable, sizeof(*stable));
-
 	*stable = true;
 
 	// check for unstable pairs
-	markUnstable<<<1, n * n>>>(rankingMatrix, n, matchingPairs, stable);
-
+	unstable<<<1, n * n>>>(rankingMatrix, n, matchingPairs, stable);
 	cudaDeviceSynchronize();
 
-	markNM1Gen(rankingMatrix);
+	nm1Gen(rankingMatrix);
 
-	markNM1(rankingMatrix);
+	bool *nm1Pairs;
+	cudaMallocManaged(&nm1Pairs, 2 * n * sizeof(*nm1Pairs));
+	nm1(rankingMatrix, nm1Pairs);
 
-	nm2Gen<<<1, n * n>>>(rankingMatrix, matchingPairs, n);
+	// mark the nm_2-generating pairs
+	nm2GenHost(rankingMatrix, matchingPairs, nm1Pairs, n);
 
-	cudaDeviceSynchronize();
+	cudaFree(nm1Pairs);
 
 	printRankingMatrix(rankingMatrix);
 
