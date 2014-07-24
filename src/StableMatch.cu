@@ -68,16 +68,6 @@ struct Element {
 // second half of array contains swapped values sorted by key
 thrust::pair<int, int> *matchingPairs;
 
-// array indicating the presence or absence of nm_1 pairs in rows and columns
-// first n entries correspond to row 1 to n
-// second n entries correspond to columns 1 to n
-//bool *nm1Pairs;
-
-// array of pointers to the nm_2-generating pairs
-// for first n, index is row zero-indexed, value is pointer
-// for second n, index is column zero-indexed, value is pointer
-//Element **nm2GenPairPointers;
-
 // global state for stable matching
 // true if no unstable matches exist, false otherwise
 bool *stable;
@@ -336,11 +326,14 @@ __global__ void nm2GenDevice(
 		Element **nm2GenPairPointers,
 		int n) {
 
-	// if Element is an nm_1 pair
-	if (rankingMatrix[threadIdx.x].type == 4) {
+	// save a pointer to the Element at row i and column j in the ranking matrix
+	Element *e_ij = &rankingMatrix[threadIdx.x];
 
-		int col = rankingMatrix[threadIdx.x].y;
-		int row = rankingMatrix[threadIdx.x].x;
+	// if Element is an nm_1 pair
+	if ((*e_ij).type == 4) {
+
+		int col = (*e_ij).y;
+		int row = (*e_ij).x;
 
 		// get the row of the matching pair in the same column
 		int l = matchingPairs[n + col - 1].second;
@@ -349,14 +342,18 @@ __global__ void nm2GenDevice(
 		int k = matchingPairs[row - 1].second;
 
 		// save a pointer to the Element at row l and column k in the ranking matrix
-		Element *e = &rankingMatrix[n * (l - 1) + (k - 1)];
+		Element *e_lk = &rankingMatrix[n * (l - 1) + (k - 1)];
 
-		// mark element as nm2-generating (not nm_1 pairs?)
-		(*e).nm2gen = true;
+		// if e_{l,k} is not an nm_1 pair
+		if ((*e_lk).type != 4) {
 
-		// save a pointer to this pair in the nm2GenPairPointersPointers array
-		nm2GenPairPointers[l - 1] = e;
-		nm2GenPairPointers[n + k - 1] = e; // for reverse lookup
+			// mark it as nm2-generating
+			(*e_lk).nm2gen = true;
+
+			// save a pointer to it in the nm2GenPairPointersPointers array
+			nm2GenPairPointers[l - 1] = e_lk;
+			nm2GenPairPointers[n + k - 1] = e_lk; // for reverse lookup
+		}
 	}
 }
 
