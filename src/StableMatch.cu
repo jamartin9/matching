@@ -19,7 +19,6 @@
 
 using namespace std;
 //TODO:
-// Find nm2 pairs
 // Create new matching
 // Add controlling logic
 // Change find minimum to not use thrust and use kernel for rows and cols
@@ -410,6 +409,52 @@ __global__ void nm2GenPointers(
 	}
 }
 
+// CUDA kernel to mark nm2 pairs
+__global__ void nm2Pairs(Element *rankingMatrix, int n) {
+
+	// if the pair is nm2
+	if (rankingMatrix[threadIdx.x].nm2gen) {
+		// save pointer to element
+		Element *e = &rankingMatrix[threadIdx.x];
+		// if the pair is row end
+		int row = n + 1;
+		if (((*(*e).rPointer).x == (*e).x) && ((*(*e).rPointer).y == (*e).y)) {
+
+			// if the pair is column end
+			if (((*(*e).cPointer).x == (*e).x)
+					&& ((*(*e).cPointer).y == (*e).y)) {
+				// mark pair as isolated nm2
+				(*e).type = 5;
+				// return the stream
+				return;
+			}
+			// otherwise save row position
+			else {
+				row = (*e).x;
+			}
+		}
+		// find column end with pointer jumps (This mutates cPointer...)
+		for (int i = 0; i < n / 2; i++) {
+			// if what we are pointing to points to itself
+			if ((*(*e).cPointer).cPointer == (*e).cPointer) {
+				// get column from c pointer if the row end reaches column end
+				if (row != n + 1) {
+					int col = (*(*e).cPointer).y;
+					//printf("\nThe pair at %i, %i is nm2\n",row, col);
+					// change pair to nm2
+					rankingMatrix[(n * (row - 1)) + (col - 1)].type = 5;
+					return;
+				}
+				// return once thread reaches column end
+				return;
+			}
+			// update c pointer to what we are pointing to's pointer
+			(*e).cPointer = (*(*e).cPointer).cPointer;
+		}
+	}
+
+}
+
 // function to print out ranking matrix L and R values
 void printRankingMatrix(Element rankingMatrix[]) {
 
@@ -567,7 +612,10 @@ void nm1Gen(Element *rankingMatrix) {
 	protoNM1Gen<<<1, n * n>>>(rankingMatrix, nm1GenPairs, n);
 	cudaDeviceSynchronize();
 	// for each row
+	//#pragma omp parallel for firstprivate(nm1GenPairs)
 	for (int i = 0; i < n; i++) {
+		// remove this line and add "nm1GenPairs = nm1GenPairs + n;" if serial implementation is needed
+		//nm1GenPairs = nm1GenPairs + i * n;
 		// make pointer to the minimum element in the row
 		thrust::pair<int, int> *minElementInRow = thrust::min_element(
 				nm1GenPairs, nm1GenPairs + n);
@@ -576,7 +624,7 @@ void nm1Gen(Element *rankingMatrix) {
 			// change the type to nm_1-generating pair
 			rankingMatrix[i * n + ((*minElementInRow).second - 1)].type = 3;
 		}
-
+		// Add this line and remove "nm1GenPairs = nm1GenPairs + i*n;" line if serial implementation is needed
 		nm1GenPairs = nm1GenPairs + n;
 	}
 
@@ -601,8 +649,10 @@ void nm1(Element *rankingMatrix, bool *nm1Pairs) {
 	cudaDeviceSynchronize();
 
 	// for each col
-	for (int i = 0; i < n; i++) {
-
+	//#pragma omp parallel for firstprivate(localNM1Pairs)
+		for (int i = 0; i < n; i++) {
+		// remove this line and add "localNM1Pairs = localNM1Pairs + n;" if serial implementation is needed
+		//localNM1Pairs = localNM1Pairs + i * n;
 		// make pointer to the minimum element in the column
 		thrust::pair<int, int> *minElementInRow = thrust::min_element(localNM1Pairs, localNM1Pairs + n);
 
@@ -621,6 +671,7 @@ void nm1(Element *rankingMatrix, bool *nm1Pairs) {
 			nm1Pairs[n + (*e).y - 1] = true;
 		}
 
+		// Add this line and remove "localNM1Pairs = localNM1Pairs + i*n;" if serial implementation is needed
 		localNM1Pairs = localNM1Pairs + n;
 	}
 
@@ -801,6 +852,9 @@ int main(int argc, char **argv) {
 	nm2GenHost(rankingMatrix, matchingPairs, nm1Pairs, n);
 
 	cudaFree(nm1Pairs);
+
+	nm2Pairs<<<1, n * n>>>(rankingMatrix, n);
+	cudaDeviceSynchronize();
 
 	printRankingMatrix(rankingMatrix);
 
