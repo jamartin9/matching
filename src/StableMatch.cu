@@ -482,6 +482,25 @@ __global__ void newMatching(Element *rankingMatrix, int n,
 
 }
 
+// CUDA kernel to reset after one run of the ITERATION PHASE
+__global__ void resetAfterIteration(Element *rankingMatrix){
+	//reset pointers to point to themselves
+	rankingMatrix[threadIdx.x].cPointer = &rankingMatrix[threadIdx.x];
+	rankingMatrix[threadIdx.x].rPointer = &rankingMatrix[threadIdx.x];
+	rankingMatrix[threadIdx.x].pointer = &rankingMatrix[threadIdx.x];
+
+	// reset nm2gen
+	rankingMatrix[threadIdx.x].nm2gen = false;
+
+	// reset the type of all non matching pairs
+	if(rankingMatrix[threadIdx.x].type != 1){
+		rankingMatrix[threadIdx.x].type = 0;
+	}
+
+
+}
+
+
 // function to print out ranking matrix L and R values
 void printRankingMatrix(Element rankingMatrix[]) {
 
@@ -884,6 +903,9 @@ int main(int argc, char **argv) {
 	cudaDeviceSynchronize();
 
 	newMatching<<<1, n*n>>>(rankingMatrix, n, matchingPairs);
+	cudaDeviceSynchronize();
+
+	resetAfterIteration<<<1, n*n>>>(rankingMatrix);
 	cudaDeviceSynchronize();
 
 	printRankingMatrix(rankingMatrix);
