@@ -144,7 +144,7 @@ __global__ void preMatch(Element *rankingMatrix, int n) {
 	if (threadIdx.x + n < n * n) {
 		// set the current PE's pointer to the next PE
 		rankingMatrix[threadIdx.x].pointer =
-				rankingMatrix[threadIdx.x + n].pointer;
+				&rankingMatrix[threadIdx.x + n];
 	}
 }
 
