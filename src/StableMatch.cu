@@ -40,7 +40,7 @@ struct Element {
 	// r value of the graph (e.g., women pref)
 	int r;
 	// logical pointer to element
-	int pointer;
+	Element *pointer;
 	// type of the pair
 	//   0: unmatched
 	//   1: matched
@@ -167,7 +167,7 @@ __global__ void perMatch(Element *rankingMatrix, int n, int randomOffsets[]) {
 	//printf("pos1: %i, pos2: %i\n", pos1, pos2);
 
 	// save current pointer
-	int pointer = rankingMatrix[pos1].pointer;
+	Element *pointer = rankingMatrix[pos1].pointer;
 
 	// switch pointers with another element in same row
 	rankingMatrix[pos1].pointer = rankingMatrix[pos2].pointer;
@@ -184,28 +184,30 @@ __global__ void perMatch(Element *rankingMatrix, int n, int randomOffsets[]) {
 // formed" (Lu2003, 47).
 __global__ void iniMatch(Element *rankingMatrix, int n,
 		thrust::pair<int, int> pairs[]) {
+
+	Element *e = &rankingMatrix[threadIdx.x];
+
 	// value holders for first row
 	int a;
 	// if we are in the first row save out pointer
 	if (threadIdx.x < n) {
 		// make temporary element to hold first item
 
-		a = rankingMatrix[threadIdx.x].y; // a, as in Pair (a,b)
+		a = (*e).y; // a, as in Pair (a,b)
 
 		// take x value for one member of pair
 		pairs[threadIdx.x].first = a;
 	}
 	// while we are not at the end
-	while (rankingMatrix[threadIdx.x].pointer < (n * n) - n) {
+	while ( (*((*e).pointer)).x < n) {
 		// set our pointer to the pointer of the element we point to
-		rankingMatrix[threadIdx.x].pointer =
-				rankingMatrix[rankingMatrix[threadIdx.x].pointer].pointer;
 		//printf("Thread: %i, pointer: %i\n",threadIdx.x,rankingMatrix[threadIdx.x].pointer);
+		(*e).pointer = (*((*e).pointer)).pointer;
 	}
 	// if we started in the first row save our end position
 	if (threadIdx.x < n) {
 		int b;
-		b = rankingMatrix[rankingMatrix[threadIdx.x].pointer].y; // b, as in Pair (a,b)
+		b = (*((*e).pointer)).y; // b, as in Pair (a,b)
 
 		rankingMatrix[(a - 1) * n + (b - 1)].type = 1; // mark as matching
 
@@ -781,8 +783,8 @@ int main(int argc, char **argv) {
 
 		rankingMatrix[i].type = 0; // mark unmatched
 		rankingMatrix[i].nm2gen = false;
-		// set the pointer to point to its element in the array
-		rankingMatrix[i].pointer = i;
+		// point to thyself
+		rankingMatrix[i].pointer = &rankingMatrix[i];
 
 		// set the l value based on Mans preference
 		ss >> rankingMatrix[i].l;
