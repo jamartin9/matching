@@ -402,12 +402,6 @@ __global__ void nm2GenPointers(
 			// it points to itself
 			(*e).cPointer = e;
 		}
-
-		//if ((*e).rPointer == e && (*e).cPointer == e) {
-			// e is isolated node in G_M,
-			// add *e to the list of nm_2 pairs
-			//(*e).type = 5;
-		//}
 	}
 }
 
@@ -453,6 +447,37 @@ __global__ void nm2Pairs(Element *rankingMatrix, int n) {
 			// update c pointer to what we are pointing to's pointer
 			(*e).cPointer = (*(*e).cPointer).cPointer;
 		}
+	}
+
+}
+
+// CUDA kernel to remove old pairs and insert new ones
+__global__ void newMatching(Element *rankingMatrix, int n,
+		thrust::pair<int, int> *matchingPairs) {
+	// if the element is a nm pair
+	if (rankingMatrix[threadIdx.x].type == 4
+			|| rankingMatrix[threadIdx.x].type == 5) {
+		// get the row and col of the element
+		int rowForMatching = rankingMatrix[threadIdx.x].x;
+		int colForMatching = rankingMatrix[threadIdx.x].y;
+
+		// change the matching pairs at row and save old value
+		int rowOldPair = matchingPairs[rowForMatching - 1].first;
+		matchingPairs[rowForMatching - 1].first = rowForMatching;
+
+		int colOldPair = matchingPairs[rowForMatching - 1].second;
+		matchingPairs[rowForMatching - 1].second = colForMatching;
+
+		// change the matching pairs at the colForMatching
+		matchingPairs[n + colForMatching - 1].first = colForMatching;
+		matchingPairs[n + colForMatching - 1].second = rowForMatching;
+
+		// update the type of new matching pairs
+		rankingMatrix[threadIdx.x].type = 1;
+
+		// update the type of old matching pairs
+		rankingMatrix[n * (rowOldPair - 1) + (colOldPair - 1)].type = 0;
+
 	}
 
 }
@@ -856,6 +881,9 @@ int main(int argc, char **argv) {
 	cudaFree(nm1Pairs);
 
 	nm2Pairs<<<1, n * n>>>(rankingMatrix, n);
+	cudaDeviceSynchronize();
+
+	newMatching<<<1, n*n>>>(rankingMatrix, n, matchingPairs);
 	cudaDeviceSynchronize();
 
 	printRankingMatrix(rankingMatrix);
