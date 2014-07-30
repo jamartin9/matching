@@ -500,6 +500,25 @@ __global__ void resetAfterIteration(Element *rankingMatrix){
 
 }
 
+// CUDA kernel to reset all elements
+__global__ void resetAll(Element *rankingMatrix, thrust::pair<int,int> *matchingPairs, int n){
+	//reset pointers to point to themselves
+	rankingMatrix[threadIdx.x].cPointer = &rankingMatrix[threadIdx.x];
+	rankingMatrix[threadIdx.x].rPointer = &rankingMatrix[threadIdx.x];
+	rankingMatrix[threadIdx.x].pointer = &rankingMatrix[threadIdx.x];
+
+	// reset nm2gen
+	rankingMatrix[threadIdx.x].nm2gen = false;
+
+	// reset the type of all non matching pairs
+	rankingMatrix[threadIdx.x].type = 0;
+	// reset the matching pairs
+	if(threadIdx.x < 2*n){
+		matchingPairs[threadIdx.x].first = 0;
+		matchingPairs[threadIdx.x].second = 0;
+	}
+
+}
 
 // function to print out ranking matrix L and R values
 void printRankingMatrix(Element rankingMatrix[]) {
@@ -640,7 +659,7 @@ void initMatch(Element rankingMatrix[]) {
 	cudaFree(randomOffsets);
 
 	// allocate pairs on the GPU, n for forward, n for reverse
-	cudaMallocManaged(&matchingPairs, sizeof(matchingPairs[0]) * 2 * n);
+	//cudaMallocManaged(&matchingPairs, sizeof(matchingPairs[0]) * 2 * n);
 
 	// call kernel to create initial match
 	iniMatch<<<1, n * n>>>(rankingMatrix, n, matchingPairs);
@@ -878,15 +897,29 @@ int main(int argc, char **argv) {
 	}
 	/****************** End of Section ******************/
 
+	// allocate stable
+	cudaMallocManaged(&stable, sizeof(*stable));
+
+	// allocate pairs on the GPU, n for forward, n for reverse
+	cudaMallocManaged(&matchingPairs, sizeof(matchingPairs[0]) * 2 * n);
+
+	do{
 	// create initial matching
 	initMatch(rankingMatrix);
 
-	cudaMallocManaged(&stable, sizeof(*stable));
+	for(int c = 0; c < n; c++){
 	*stable = true;
 
 	// check for unstable pairs
 	unstable<<<1, n * n>>>(rankingMatrix, n, matchingPairs, stable);
 	cudaDeviceSynchronize();
+
+	if(*stable){
+		printRankingMatrix(rankingMatrix);
+
+		printPairs();
+		break;
+	}
 
 	nm1Gen(rankingMatrix);
 
@@ -912,8 +945,16 @@ int main(int argc, char **argv) {
 
 	printPairs();
 
-	cudaFree(stable);
+	}// end of for
+	resetAll<<<1, n*n>>>(rankingMatrix, matchingPairs, n);
+	cudaDeviceSynchronize();
+	}
+	while(!*stable);// end of while
+
 	cudaFree(matchingPairs);
+
+	cudaFree(stable);
+
 	cudaFree(rankingMatrix);
 
 	/****************** Reset And End ******************/
