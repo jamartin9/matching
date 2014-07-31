@@ -74,6 +74,14 @@ bool *stable;
 // global counter for the number of lines/people
 int n;
 
+void checkArgs(int argc) {
+	if (argc != 2) {
+		cerr << "Incorrect number of arguments" << endl
+		     << "Please enter the path to the file as the first argument" << endl;
+		exit(EXIT_FAILURE);
+	}
+}
+
 // function for printing pairs
 void printPairs() {
 
@@ -793,15 +801,7 @@ int main(int argc, char **argv) {
 
 	createSignalHandlers(); // for stopping algorithm
 
-	// check CLI arguments
-	// check that the number of arguments is two
-	if (argc != 2) {
-		// print error and return -1
-		cerr << "Incorrect number of arguments\n"
-				<< "Please enter the path to the file as the first argument"
-				<< endl;
-		return -1;
-	}
+	checkArgs(argc);
 
 	// make a pointer to the path of the file from the CLI arguments
 	const char *UsersFile;
