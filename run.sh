@@ -2,5 +2,5 @@
 
 while [ $? -eq 0 ]
 do
-    ./Debug/Matching $1x$1.txt;
+    ./Debug/Matching input/$1x$1.txt;
 done
