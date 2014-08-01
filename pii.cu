@@ -19,6 +19,7 @@
 
 using namespace std;
 //TODO:
+// Fix Reduction kernel
 // Make random number generation parallel
 // Generate random preference lists
 // Make matrix generation parallel
@@ -562,7 +563,8 @@ __global__ void resetAll(
 // nm1Gen reduction kernel
 __global__ void nm1GenDevice(
 		Element *rankingMatrix,
-		thrust::pair<int, thrust::pair<int, int> > *sharedArray) {
+		thrust::pair<int, thrust::pair<int, int> > *sharedArray,
+		int n) {
 
 		//(blockDim*2) = n
 		// thread id
@@ -576,10 +578,10 @@ __global__ void nm1GenDevice(
 				int pb = pa + stepSize;
 
 				// if pa is greater than pb save pb values in pa
-				if(sharedArray[blockIdx.x*(blockDim.x*2) +pa].first > sharedArray[blockIdx.x*(blockDim.x*2) +pb].first){
-					sharedArray[blockIdx.x*(blockDim.x*2) +pa].first = sharedArray[blockIdx.x*(blockDim.x*2) +pb].first;
-					sharedArray[blockIdx.x*(blockDim.x*2) +pa].second.first = sharedArray[blockIdx.x*(blockDim.x*2) +pb].second.first;
-					sharedArray[blockIdx.x*(blockDim.x*2) +pa].second.second = sharedArray[blockIdx.x*(blockDim.x*2) +pb].second.second;
+				if(sharedArray[blockIdx.x*n +pa].first > sharedArray[blockIdx.x*n +pb].first){
+					sharedArray[blockIdx.x*n +pa].first = sharedArray[blockIdx.x*n +pb].first;
+					sharedArray[blockIdx.x*n +pa].second.first = sharedArray[blockIdx.x*n +pb].second.first;
+					sharedArray[blockIdx.x*n +pa].second.second = sharedArray[blockIdx.x*n +pb].second.second;
 				}
 			}
 			__syncthreads();
@@ -588,9 +590,9 @@ __global__ void nm1GenDevice(
 		// if thread 0
 		if(threadIdx.x == 0){
 			// if min value isn't invalid
-			if(sharedArray[blockIdx.x*(blockDim.x*2)].first != (blockDim.x*2)+1){
+			if(sharedArray[blockIdx.x*n].first != n+1){
 				// change type in matrix
-				rankingMatrix[ (blockDim.x*2) * (sharedArray[blockIdx.x*(blockDim.x*2)].second.first -1) + sharedArray[blockIdx.x*(blockDim.x*2)].second.second - 1 ].type = 3;
+				rankingMatrix[ n * (sharedArray[blockIdx.x*n].second.first -1) + sharedArray[blockIdx.x*n].second.second - 1 ].type = 3;
 			}
 		}
 
@@ -599,9 +601,9 @@ __global__ void nm1GenDevice(
 // nm1 reduction kernel
 __global__ void nm1Device(Element *rankingMatrix,
 		thrust::pair<int, thrust::pair<int, int> > *sharedArray,
-		bool *nm1Pairs) {
+		bool *nm1Pairs,
+		int n) {
 
-	//(blockDim*2) = n
 	// thread id
 	int tid = threadIdx.x;
 	// tc is thread count
@@ -613,10 +615,10 @@ __global__ void nm1Device(Element *rankingMatrix,
 			int pb = pa + stepSize;
 
 			// if pa is greater than pb save pb values in pa
-			if(sharedArray[blockIdx.x*(blockDim.x*2) +pa].first > sharedArray[blockIdx.x*(blockDim.x*2) +pb].first){
-				sharedArray[blockIdx.x*(blockDim.x*2) +pa].first = sharedArray[blockIdx.x*(blockDim.x*2) +pb].first;
-				sharedArray[blockIdx.x*(blockDim.x*2) +pa].second.first = sharedArray[blockIdx.x*(blockDim.x*2) +pb].second.first;
-				sharedArray[blockIdx.x*(blockDim.x*2) +pa].second.second = sharedArray[blockIdx.x*(blockDim.x*2) +pb].second.second;
+			if(sharedArray[blockIdx.x*n +pa].first > sharedArray[blockIdx.x*n +pb].first){
+				sharedArray[blockIdx.x*n +pa].first = sharedArray[blockIdx.x*n +pb].first;
+				sharedArray[blockIdx.x*n +pa].second.first = sharedArray[blockIdx.x*n +pb].second.first;
+				sharedArray[blockIdx.x*n +pa].second.second = sharedArray[blockIdx.x*n +pb].second.second;
 			}
 		}
 		__syncthreads();
@@ -625,14 +627,14 @@ __global__ void nm1Device(Element *rankingMatrix,
 	// if thread 0
 	if(threadIdx.x == 0){
 		// if min value isn't invalid
-		if(sharedArray[blockIdx.x*(blockDim.x*2)].first != (blockDim.x*2)+1){
+		if(sharedArray[blockIdx.x*n].first != n+1){
 			// change type in matrix
-			rankingMatrix[ (blockDim.x*2) * (sharedArray[blockIdx.x*(blockDim.x*2)].second.first -1) + sharedArray[blockIdx.x*(blockDim.x*2)].second.second - 1 ].type = 4;
+			rankingMatrix[ n * (sharedArray[blockIdx.x*n].second.first -1) + sharedArray[blockIdx.x*n].second.second - 1 ].type = 4;
 			// remember that there is an nm_1 pair in this row
-			nm1Pairs[sharedArray[blockIdx.x*(blockDim.x*2)].second.first - 1] = true;
+			nm1Pairs[sharedArray[blockIdx.x*n].second.first - 1] = true;
 
 			// remember that there is an nm_1 pair in this column
-			nm1Pairs[(blockDim.x*2) + sharedArray[blockIdx.x*(blockDim.x*2)].second.second - 1] = true;
+			nm1Pairs[n + sharedArray[blockIdx.x*n].second.second - 1] = true;
 		}
 	}
 }
@@ -793,9 +795,10 @@ void nm1Gen(Element *rankingMatrix) {
 
 	protoNM1Gen<<<n, n>>>(rankingMatrix, nm1GenPairs);
 	cudaDeviceSynchronize();
-
-	nm1GenDevice<<<n, n/2>>>(rankingMatrix, nm1GenPairs);
+	//printRankingMatrix(rankingMatrix);
+	nm1GenDevice<<<n, n/2>>>(rankingMatrix, nm1GenPairs, n);
 	cudaDeviceSynchronize();
+	//printRankingMatrix(rankingMatrix);
 
 	/*
 	// for each row
@@ -835,8 +838,9 @@ void nm1(Element *rankingMatrix, bool *nm1Pairs) {
 
 	cudaDeviceSynchronize();
 
-	nm1Device<<<n, n/2>>>(rankingMatrix, localNM1Pairs, nm1Pairs);
+	nm1Device<<<n, n/2>>>(rankingMatrix, localNM1Pairs, nm1Pairs, n);
 	cudaDeviceSynchronize();
+	//printRankingMatrix(rankingMatrix);
 
 /*
 	// for each col
@@ -1035,7 +1039,7 @@ int main(int argc, char **argv) {
 	cudaDeviceSynchronize();
 
 	if(*stable){
-		printRankingMatrix(rankingMatrix);
+		//printRankingMatrix(rankingMatrix);
 
 		printPairs();
 		break;
