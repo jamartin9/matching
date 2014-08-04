@@ -10,20 +10,20 @@
 #include <string>
 // for printf()
 #include <cstdio>
-// for time()
-#include <time.h>
-// for thrust::min_element()
-#include <thrust/extrema.h>
 // for thrust pairs
 #include <thrust/pair.h>
+// for time
+//#include <sys/time.h>
+// for thrust::min_element()
+//#include <thrust/extrema.h>
 
 using namespace std;
 //TODO:
-// Fix Reduction kernel
 // Make random number generation parallel
-// Generate random preference lists
 // Make matrix generation parallel
 // Maybe change int Type to series of boolean values
+// Allocate n on GPU and pass pointer to it when needed
+// Make scale to larger than 1024 x 1024 problem size
 
 // structure for each Processor Element
 struct Element {
@@ -724,7 +724,7 @@ void printRankingMatrixPointers(Element rankingMatrix[]) {
 void generateRandomOffsets(int randomOffsets[]) {
 
 	// get random seed
-	srand(time(NULL));
+	//srand(time(NULL));
 	// for the number of random offsets we need (n-1)
 	for (int i = n - 1, j = 0; i > 0; i--, j++) {
 
@@ -742,8 +742,9 @@ void generateRandomOffsets(int randomOffsets[]) {
 		randomOffsets[j] = randInt;
 
 		// print out the number generated
-		//cout << randomOffsets[j] << " ";
+		//cout <<"Offsets: " <<randomOffsets[j] << " ";
 	}
+	//cout<<endl;
 }
 
 // function to generate initial match on host
@@ -795,10 +796,9 @@ void nm1Gen(Element *rankingMatrix) {
 
 	protoNM1Gen<<<n, n>>>(rankingMatrix, nm1GenPairs);
 	cudaDeviceSynchronize();
-	//printRankingMatrix(rankingMatrix);
+
 	nm1GenDevice<<<n, n/2>>>(rankingMatrix, nm1GenPairs, n);
 	cudaDeviceSynchronize();
-	//printRankingMatrix(rankingMatrix);
 
 	/*
 	// for each row
@@ -840,7 +840,6 @@ void nm1(Element *rankingMatrix, bool *nm1Pairs) {
 
 	nm1Device<<<n, n/2>>>(rankingMatrix, localNM1Pairs, nm1Pairs, n);
 	cudaDeviceSynchronize();
-	//printRankingMatrix(rankingMatrix);
 
 /*
 	// for each col
@@ -896,8 +895,12 @@ void nm2GenHost(
 	cudaFree(nm2GenPairPointers);
 }
 
+//#define BILLION 1000000000L
+
 // main function
 int main(int argc, char **argv) {
+
+	srand(time(NULL));
 
 	n = 0; // start with no participants
 
@@ -909,16 +912,14 @@ int main(int argc, char **argv) {
 	const char *UsersFile;
 	UsersFile = argv[1];
 
-	/****************** Make This Section Parallel ******************/
-
 	// make a file stream called inFile from the users file
-	ifstream inFile(UsersFile);
+	ifstream inFile(UsersFile,ifstream::in);
 
 	// make string to hold file information
 	string s = "";
 
 	// if the file exists and is open
-	if (inFile) {
+	if (inFile.is_open()) {
 
 		// read all data into string from file
 		while (inFile.good()) {
@@ -953,6 +954,7 @@ int main(int argc, char **argv) {
 
 	// create element pointer for Ranking Matrix
 	Element *rankingMatrix;
+
 	// allocate memory on GPU for rankingMatrix
 	cudaMallocManaged(&rankingMatrix, (sizeof(*rankingMatrix) * (n * n)));
 
@@ -1017,15 +1019,16 @@ int main(int argc, char **argv) {
 			colsDone++;
 		}
 	}
-	/****************** End of Section ******************/
+
 	// allocate stable
 	cudaMallocManaged(&stable, sizeof(*stable));
 
 	// allocate pairs on the GPU, n for forward, n for reverse
 	cudaMallocManaged(&matchingPairs, sizeof(matchingPairs[0]) * 2 * n);
-	int iter=0;
-	//dim3 numOfBlocks(n);
-	//dim3 numOfThreads(n);
+	// Timing Code
+	//uint64_t diff;
+	//struct timespec start, end;
+	//clock_gettime(CLOCK_MONOTONIC,&start);
 	do{
 	// create initial matching
 	initMatch(rankingMatrix);
@@ -1039,12 +1042,13 @@ int main(int argc, char **argv) {
 	cudaDeviceSynchronize();
 
 	if(*stable){
-		//printRankingMatrix(rankingMatrix);
 
+		//clock_gettime(CLOCK_MONOTONIC, &end);
+		//diff = BILLION * (end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec;
 		printPairs();
 		break;
 	}
-	iter++;
+
 	nm1Gen(rankingMatrix);
 
 	bool *nm1Pairs;
@@ -1067,14 +1071,15 @@ int main(int argc, char **argv) {
 	resetAfterIteration<<<n, n>>>(rankingMatrix);
 	cudaDeviceSynchronize();
 
-
 	}// end of for
 	resetAll<<<n, n>>>(rankingMatrix, matchingPairs);
 
 	cudaDeviceSynchronize();
 	}
 	while(!*stable);// end of while
-	printf("iterations: %i\n",iter);
+
+	//printf("%llu\n", (long long unsigned int) diff);
+
 	cudaFree(matchingPairs);
 
 	cudaFree(stable);
