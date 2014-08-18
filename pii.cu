@@ -91,7 +91,7 @@ void printPairs() {
         for (int i = 0; i < n; i++) {
             // print out both values
             cout << "(" << matchingPairs[i].first << ","
-                 << matchingPairs[i].second << ") ";
+                        << matchingPairs[i].second << ") ";
         }
         cout << endl;
     }
@@ -159,13 +159,11 @@ __global__ void preMatch(Element *rankingMatrix) {
 // forming n new disjoint lists starting at PE_(1,j) (Lu2003, 47).
 __global__ void perMatch(Element *rankingMatrix, int randomOffsets[], int n) {
 
-    //printf("randomOffsets[threadIdx.x]: %i\n", randomOffsets[threadIdx.x]);
     // save index of current element
     int pos1 = n * threadIdx.x + threadIdx.x;
+
     // save index of element in same row we are swapping with
     int pos2 = pos1 + randomOffsets[threadIdx.x];
-
-    //printf("pos1: %i, pos2: %i\n", pos1, pos2);
 
     // save current pointer
     Element *pointer = rankingMatrix[pos1].pointer;
@@ -204,7 +202,6 @@ __global__ void iniMatch(Element *rankingMatrix,
     // while we are not at the end
     while ( (*((*e).pointer)).x < blockDim.x) {
         // set our pointer to the pointer of the element we point to
-        //printf("Thread: %i, pointer: %i\n",threadIdx.x,rankingMatrix[threadIdx.x].pointer);
         (*e).pointer = (*((*e).pointer)).pointer;
     }
     // if we started in the first row save our end position
@@ -233,7 +230,6 @@ __global__ void unstable(Element *rankingMatrix,
     // element associated with this thread
 
     Element *e = &rankingMatrix[tid];
-    //printf("e: threadIdx: %2i, y: %i, x: %i\n", threadIdx.x, e.y, e.x);
 
     // element of matching pair in same row
 
@@ -251,7 +247,6 @@ __global__ void unstable(Element *rankingMatrix,
     int index = indexToRowInRankingMatrix + colIndex;
 
     Element r = rankingMatrix[index];
-    //printf("r: threadIdx: %2i, y: %i, x: %i\n", threadIdx.x, r.y, r.x);
 
     // element of matching pair in same column
 
@@ -269,13 +264,11 @@ __global__ void unstable(Element *rankingMatrix,
     index = indexToRowInRankingMatrix + colIndex;
 
     Element c = rankingMatrix[index];
-    //printf("c: threadIdx: %2i, y: %i, x: %i\n", threadIdx.x, c.y, c.x);
 
     if (r.l > (*e).l && c.r > (*e).r) {
         rankingMatrix[tid].type = 2;
         *stable = false;
         (*e).type = 2; // mark it as unstable
-        //printf("unstable pair: (%i,%i)\n", (*e).y, (*e).x);
     }
 }
 
@@ -306,17 +299,20 @@ __global__ void protoNM1(Element *rankingMatrix,
 
     // get the column index in ranking matrix
     int col = (rankingMatrix[tid].y - 1) * blockDim.x;
+
     // get the position in column
     int shift = rankingMatrix[tid].x - 1;
-    //printf("thread: %i, shift: %i, col: %i, indexInPairs: %i\n",threadIdx.x,shift,col,col+shift);
 
     //if the type is nm1 gen
     if (rankingMatrix[tid].type == 3) {
+
         // take the r and row position
         nm1GenPairs[col + shift].first = rankingMatrix[tid].r;
         nm1GenPairs[col + shift].second.first = rankingMatrix[tid].x;
         nm1GenPairs[col + shift].second.second = rankingMatrix[tid].y;
+
     } else {
+
         // set the r value to more than the max r value
         nm1GenPairs[col + shift].first = blockDim.x + 1;
         nm1GenPairs[col + shift].second.first = rankingMatrix[tid].x;
@@ -456,7 +452,6 @@ __global__ void nm2Pairs(Element *rankingMatrix) {
                 // get column from c pointer if the row end reaches column end
                 if (row != blockDim.x + 1) {
                     int col = (*(*e).cPointer).y;
-                    //printf("\nThe pair at %i, %i is nm2\n",row, col);
                     // change pair to nm2
                     rankingMatrix[(blockDim.x * (row - 1)) + (col - 1)].type = 5;
                     return;
@@ -1013,8 +1008,6 @@ int main(int argc, char **argv) {
         cudaDeviceSynchronize();
     }
     while(!*stable);// end of while
-
-    //printf("%llu\n", (long long unsigned int) diff);
 
     cudaFree(matchingPairs);
 
