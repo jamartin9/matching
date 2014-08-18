@@ -13,9 +13,7 @@
 // for thrust pairs
 #include <thrust/pair.h>
 // for time
-//#include <sys/time.h>
-// for thrust::min_element()
-//#include <thrust/extrema.h>
+#include <sys/time.h>
 
 using namespace std;
 //TODO:
@@ -828,7 +826,7 @@ void nm2GenHost(Element *rankingMatrix,
     cudaFree(nm2GenPairPointers);
 }
 
-//#define BILLION 1000000000L
+#define BILLION 1000000000L
 
 // main function
 int main(int argc, char **argv) {
@@ -882,6 +880,7 @@ int main(int argc, char **argv) {
 
     // make a string stream from string read from file
     stringstream ss(s);
+
     // divide n by 2 because we have menPrefs and womenPrefs in the same file
     n = n / 2;
 
@@ -958,10 +957,10 @@ int main(int argc, char **argv) {
 
     // allocate pairs on the GPU, n for forward, n for reverse
     cudaMallocManaged(&matchingPairs, sizeof(matchingPairs[0]) * 2 * n);
-    // Timing Code
-    //uint64_t diff;
-    //struct timespec start, end;
-    //clock_gettime(CLOCK_MONOTONIC,&start);
+    // timing Code
+    uint64_t diff;
+    struct timespec start, end;
+    clock_gettime(CLOCK_MONOTONIC,&start);
     do{
         // create initial matching
         initMatch(rankingMatrix);
@@ -976,8 +975,8 @@ int main(int argc, char **argv) {
 
             if(*stable){
 
-                //clock_gettime(CLOCK_MONOTONIC, &end);
-                //diff = BILLION * (end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec;
+                clock_gettime(CLOCK_MONOTONIC, &end);
+                diff = BILLION * (end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec;
                 printPairs();
                 break;
             }
