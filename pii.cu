@@ -828,6 +828,8 @@ void nm2GenHost(Element *rankingMatrix,
     cudaFree(nm2GenPairPointers);
 }
 
+//#define BILLION 1000000000L
+
 // main function
 int main(int argc, char **argv) {
 
