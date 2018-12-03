@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-BIN="matching"
+BIN="matching-pii"
 INPUT_PATH="input"
 OUTPUT_PATH="output"
 

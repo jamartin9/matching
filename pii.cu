@@ -27,7 +27,7 @@ using namespace std;
 struct Element {
     // graph x value, row
     int x;
-    // graph x value, column
+    // graph y value, column
     int y;
     // l value of the graph (e.g., man pref)
     int l;

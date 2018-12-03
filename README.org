@@ -1,0 +1,5 @@
+* To build with local toolchain run ~make all~ with nvcc and libs installed.
+* To build with docker run ~make matching-pii~
+* Consult input/ for data
+* Run either ~matching~ , ~matching-pii~ or the docker container.
+* ~run.sh~ and ~test_data.sh~ for example usage.
